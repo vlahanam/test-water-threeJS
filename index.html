@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ocean Wave + Real Shader</title>
+
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #111;
+      }
+
+      /* Canvas full */
+      canvas {
+        position: fixed;
+        inset: 0;
+      }
+
+      /* Overlay trên */
+      .top-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1;
+        pointer-events: none;
+        overflow: hidden;
+      }
+
+      .top-overlay img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      /* Overlay dưới */
+      .bottom-overlay {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 2;
+        pointer-events: none;
+        overflow: hidden;
+      }
+
+      .bottom-overlay img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .anh-den-overlay {
+        position: fixed;
+        bottom: 46vh;
+        left: -28vh;
+        right: 0;
+        z-index: 3;
+        pointer-events: none;
+        overflow: hidden;
+        rotate: 216deg;
+      }
+
+      .anh-den-overlay img {
+        width: 60%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      /* sm ≥ 640px */
+      @media (max-width: 640px) {
+        .top-overlay {
+          height: 100vh;
+        }
+
+        .bottom-overlay {
+          height: 100vh;
+        }
+      }
+
+      /* md ≥ 768px */
+      @media (min-width: 768px) {
+        .top-overlay {
+          height: 100vh;
+        }
+
+        .bottom-overlay {
+          height: 100vh;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Bật nếu cần -->
+
+    <div class="top-overlay">
+      <img src="images/chan-troi.png" />
+    </div>
+
+    <div class="bottom-overlay">
+      <img src="images/canh-nui.png" />
+    </div>
+
+    <div class="anh-den-overlay">
+        <img src="images/anh-den.png" />
+      </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+      // Scene
+      const scene = new THREE.Scene();
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Texture
+      const loader = new THREE.TextureLoader();
+      const baseTexture = loader.load("images/full-canh.jpg");
+      const maskTexture = loader.load("textures/waternormals.jpg");
+
+      // Material
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uTexture: { value: baseTexture },
+          uMask: { value: maskTexture },
+          uWaveIntensity: { value: 0.025 },
+          uWaveSpeed: { value: 1.2 },
+        },
+
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+
+        fragmentShader: `
+          uniform float uTime;
+          uniform sampler2D uTexture;
+          uniform sampler2D uMask;
+          uniform float uWaveIntensity;
+          uniform float uWaveSpeed;
+          varying vec2 vUv;
+
+          vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+          vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+          vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+
+          float snoise(vec2 v) {
+              const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+              vec2 i  = floor(v + dot(v, C.yy));
+              vec2 x0 = v - i + dot(i, C.xx);
+
+              vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+              vec4 x12 = x0.xyxy + C.xxzz;
+              x12.xy -= i1;
+
+              i = mod289(i);
+              vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
+
+              vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+              m = m*m;
+              m = m*m;
+
+              vec3 x = 2.0 * fract(p * C.www) - 1.0;
+              vec3 h = abs(x) - 0.5;
+              vec3 ox = floor(x + 0.5);
+              vec3 a0 = x - ox;
+
+              m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+
+              vec3 g;
+              g.x  = a0.x  * x0.x  + h.x  * x0.y;
+              g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+
+              return 130.0 * dot(m, g);
+          }
+
+          void main() {
+              float maskStrength = texture2D(uMask, vUv).r;
+
+              // chiều sâu (gần mạnh - xa yếu)
+              float depth = 1.0 - vUv.y;
+
+              float time = uTime * uWaveSpeed;
+
+              vec2 noiseCoord = vUv * vec2(18.0, 50.0) * (vUv.y + 0.5);
+
+              float noiseX = snoise(noiseCoord + vec2(time * 0.5, 0.0));
+              float noiseY = snoise(noiseCoord + vec2(0.0, time * 0.2));
+
+              vec2 distortion = vec2(noiseX, noiseY) 
+                                * uWaveIntensity 
+                                * depth 
+                                * maskStrength;
+
+              vec2 finalUv = vUv + distortion;
+
+              gl_FragColor = texture2D(uTexture, finalUv);
+          }
+        `,
+      });
+
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+      scene.add(mesh);
+
+      // Resize
+      window.addEventListener("resize", () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // Animate
+      const clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+        material.uniforms.uTime.value = clock.getElapsedTime();
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // ===== MÃ MORSE CHO ÁNH ĐÈN =====
+      const morseCode = {
+        'A': '.-',    'B': '-...',  'C': '-.-.',  'D': '-..',   'E': '.',
+        'F': '..-.',  'G': '--.',   'H': '....',  'I': '..',    'J': '.---',
+        'K': '-.-',   'L': '.-..',  'M': '--',    'N': '-.',    'O': '---',
+        'P': '.--.',  'Q': '--.-',  'R': '.-.',   'S': '...',   'T': '-',
+        'U': '..-',   'V': '...-',  'W': '.--',   'X': '-..-',  'Y': '-.--',
+        'Z': '--..',  '0': '-----', '1': '.----', '2': '..---', '3': '...--',
+        '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..',
+        '9': '----.', ' ': '/'
+      };
+
+      // Thời gian (ms)
+      const DOT_DURATION = 200;        // Chấm (.)
+      const DASH_DURATION = 600;       // Gạch (-)
+      const SYMBOL_GAP = 200;          // Khoảng cách giữa các chấm/gạch
+      const LETTER_GAP = 600;          // Khoảng cách giữa các chữ
+      const WORD_GAP = 1400;           // Khoảng cách giữa các từ
+
+      class MorseBlinker {
+        constructor(element, message, loop = true) {
+          this.element = element;
+          this.message = message.toUpperCase();
+          this.loop = loop;
+          this.timeouts = [];
+        }
+
+        textToMorse(text) {
+          return text.split('').map(char => morseCode[char] || '').join(' ');
+        }
+
+        async blink(morse) {
+          let delay = 0;
+
+          for (let i = 0; i < morse.length; i++) {
+            const symbol = morse[i];
+
+            if (symbol === '.') {
+              // Chấm: bật sáng
+              this.scheduleAction(delay, () => this.element.style.opacity = '1');
+              delay += DOT_DURATION;
+              // Tắt
+              this.scheduleAction(delay, () => this.element.style.opacity = '0');
+              delay += SYMBOL_GAP;
+            } 
+            else if (symbol === '-') {
+              // Gạch: bật sáng lâu hơn
+              this.scheduleAction(delay, () => this.element.style.opacity = '1');
+              delay += DASH_DURATION;
+              // Tắt
+              this.scheduleAction(delay, () => this.element.style.opacity = '0');
+              delay += SYMBOL_GAP;
+            } 
+            else if (symbol === ' ') {
+              // Khoảng cách giữa các chữ
+              delay += LETTER_GAP;
+            } 
+            else if (symbol === '/') {
+              // Khoảng cách giữa các từ
+              delay += WORD_GAP;
+            }
+          }
+
+          // Lặp lại nếu cần
+          if (this.loop) {
+            this.scheduleAction(delay + WORD_GAP, () => this.start());
+          }
+
+          return delay;
+        }
+
+        scheduleAction(delay, action) {
+          const timeout = setTimeout(action, delay);
+          this.timeouts.push(timeout);
+        }
+
+        start() {
+          this.stop(); // Dọn dẹp timeout cũ
+          const morse = this.textToMorse(this.message);
+          console.log(`Morse: ${this.message} -> ${morse}`);
+          this.blink(morse);
+        }
+
+        stop() {
+          this.timeouts.forEach(timeout => clearTimeout(timeout));
+          this.timeouts = [];
+          this.element.style.opacity = '0';
+        }
+
+        changeMessage(newMessage) {
+          this.message = newMessage.toUpperCase();
+          this.start();
+        }
+      }
+
+      // Khởi động Morse Blinker
+      const anhDenElement = document.querySelector('.anh-den-overlay');
+      const blinker = new MorseBlinker(anhDenElement, 'SOS', true);
+      
+      // Bắt đầu nhấp nháy sau 1 giây
+      setTimeout(() => {
+        blinker.start();
+      }, 1000);
+
+      // Ví dụ: Thay đổi thông điệp (uncomment để test)
+      // setTimeout(() => {
+      //   blinker.changeMessage('HELLO WORLD');
+      // }, 10000);
+    </script>
+  </body>
+</html>
